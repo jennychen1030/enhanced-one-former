@@ -23,6 +23,7 @@ Before installing and using this reimplemented version of OneFormer, ensure you 
 ## Usage
 - To use this version of OneFormer model, follow these steps:
   - Prepare Your Dataset: Ensure your dataset is in a format compatible with detectron2.
+  - The dataset I used is ADE20K which can be obtained online: https://groups.csail.mit.edu/vision/datasets/ADE20K/
 
   - Configuration: Adjust the configuration file (config.yaml) to suit your specific requirements, such as model parameters, training settings, etc.
 
