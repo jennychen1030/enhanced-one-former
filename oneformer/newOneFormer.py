@@ -20,7 +20,7 @@ from .modeling.transformer_decoder.oneformer_decoder_mlp import MultiLayerPercep
 from oneformer.data.simple_tokenizer import BasicTokenizer, BasicTokenize
 
 @META_ARCH_REGISTRY.register()
-class EnhancedOneFormer(nn.Module):
+class NewOneFormer(nn.Module):
     """
     Main class for mask classification semantic segmentation architectures.
     """
@@ -54,7 +54,7 @@ class EnhancedOneFormer(nn.Module):
         demo_mode: bool,
     ):
         """
-        Constructor for EnhancedOneFormer.
+        Constructor for NewOneFormer.
         
         Args:
             backbone_network: a backbone_network module, must follow detectron2's backbone_network interface
@@ -227,133 +227,6 @@ class EnhancedOneFormer(nn.Module):
         Property to get the device where the model tensors are allocated.
         """
         return self.mean_pixel_value.device
-
-    def encode_text(self, text):
-        """
-        Method to encode textual inputs.
-        Args:
-            text (Tensor): Text input tensor.
-        Returns:
-            dict: A dictionary with text encoding results.
-        """
-        assert text.ndim in [2, 3], text.ndim
-        batch_size = text.shape[0]
-        if text.ndim == 3:
-            num_text = text.shape[1]
-            text = rearrange(text, 'b n l -> (b n) l', n=num_text)
-
-        # Encoding text
-        encoded_features = self.language_encoder(text)
-        text_features = self.language_projection(encoded_features)
-        if text.ndim == 3:
-            text_features = rearrange(text_features, '(b n) c -> b n c', n=num_text)
-            if self.context_embedding is not None:
-                context_features = self.context_embedding.weight.unsqueeze(0).repeat(batch_size, 1, 1)
-                text_features = torch.cat([text_features, context_features], dim=1)
-        
-        return {"texts": text_features}
-    
-    def forward(self, batched_inputs):
-        """
-        Args:
-            batched_inputs: a list, batched outputs of :class:`DatasetMapper`.
-                Each item in the list contains the inputs for one image.
-                For now, each item in the list is a dict that contains:
-                   * "image": Tensor, image in (C, H, W) format.
-                   * "instances": per-region ground truth
-                   * Other information that's included in the original dicts, such as:
-                     "height", "width" (int): the output resolution of the model (may be different
-                     from input resolution), used in inference.
-        Returns:
-            list[dict]:
-                each dict has the results for one image. The dict contains the following keys:
-                * "sem_seg":
-                    A Tensor that represents the
-                    per-pixel segmentation prediced by the head.
-                    The prediction has shape KxHxW that represents the logits of
-                    each class for each pixel.
-                * "panoptic_seg":
-                    A tuple that represent panoptic output
-                    panoptic_seg (Tensor): of shape (height, width) where the values are ids for each segment.
-                    segments_info (list[dict]): Describe each segment in `panoptic_seg`.
-                        Each dict contains keys "id", "category_id", "isthing".
-        """
-        images = [x["image"].to(self.device) for x in batched_inputs]
-        images = [(x - self.mean_pixel_value) / self.std_pixel_value for x in images]
-        images = ImageList.from_tensors(images, self.divisibility_factor)
-
-        tasks = torch.cat([self.task_tokenizer(x["task"]).to(self.device).unsqueeze(0) for x in batched_inputs], dim=0)
-        tasks = self.task_specific_mlp(tasks.float())
-
-        features = self.backbone_network(images.tensor)
-        outputs = self.segmentation_head(features, tasks)
-
-        if self.training:
-            texts = torch.cat([self.text_tokenizer(x["text"]).to(self.device).unsqueeze(0) for x in batched_inputs], dim=0)
-            texts_x = self.encode_text(texts)
-            outputs = {**outputs, **texts_x}
-
-            # mask classification target
-            if "instances" in batched_inputs[0]:
-                gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
-                targets = self.prepare_targets(gt_instances, images)
-            else:
-                targets = None
-
-            losses = self.segmentation_criterion(outputs, targets)
-
-            for k in list(losses.keys()):
-                if k in self.segmentation_criterion.weight_dict:
-                    losses[k] *= self.segmentation_criterion.weight_dict[k]
-                else:
-                    losses.pop(k)
-            return losses
-        else:
-            # Handle inference here
-            mask_class_results = outputs["pred_logits"]
-            mask_pred_results = outputs["pred_masks"]
-            # Upsample masks to match image sizes
-            mask_pred_results = F.interpolate(
-                mask_pred_results,
-                size=(images.tensor.shape[-2], images.tensor.shape[-1]),
-                mode="bilinear",
-                align_corners=False,
-            )
-            del outputs
-
-            processed_results = []
-            for (mask_cls, mask_pred, input_per_image, image_size) in enumerate(
-                    zip(mask_class_results, mask_pred_results, batched_inputs, images.image_sizes)):
-                
-                height, width = input_per_image.get("height", image_size[0]), input_per_image.get("width", image_size[1])
-                processed_result = {}
-
-                if self.preprocess_before_inference:
-                    mask_pred = handle_cuda_oom(semantic_seg_postprocessing)(
-                        mask_pred, image_size, height, width)
-                    mask_cls = mask_cls.to(mask_pred.device)
-
-                # semantic segmentation inference
-                if self.enable_semantic:
-                    semantic_result = handle_cuda_oom(self.semantic_inference)(mask_cls, mask_pred)
-                    if not self.preprocess_before_inference:
-                        semantic_result = handle_cuda_oom(semantic_seg_postprocessing)(semantic_result, image_size, height, width)
-                    processed_result["sem_seg"] = semantic_result
-
-                # panoptic segmentation inference
-                if self.enable_panoptic:
-                    panoptic_result = handle_cuda_oom(self.panoptic_inference)(mask_cls, mask_pred)
-                    processed_result["panoptic_seg"] = panoptic_result
-                
-                # instance segmentation inference
-                if self.enable_instance:
-                    instance_result = handle_cuda_oom(self.instance_inference)(mask_cls, mask_pred, input_per_image["task"])
-                    processed_result["instances"] = instance_result
-
-                processed_results.append(processed_result)
-
-            return processed_results
-
     def semantic_inference(self, mask_cls, mask_pred):
         """
         Perform semantic segmentation inference.
@@ -497,6 +370,132 @@ class EnhancedOneFormer(nn.Module):
         result.scores = scores_per_image * mask_scores_per_image
         result.pred_classes = labels_per_image
         return result
+    
+    def encode_text(self, text):
+        """
+        Method to encode textual inputs.
+        Args:
+            text (Tensor): Text input tensor.
+        Returns:
+            dict: A dictionary with text encoding results.
+        """
+        assert text.ndim in [2, 3], text.ndim
+        batch_size = text.shape[0]
+        if text.ndim == 3:
+            num_text = text.shape[1]
+            text = rearrange(text, 'b n l -> (b n) l', n=num_text)
+
+        # Encoding text
+        encoded_features = self.language_encoder(text)
+        text_features = self.language_projection(encoded_features)
+        if text.ndim == 3:
+            text_features = rearrange(text_features, '(b n) c -> b n c', n=num_text)
+            if self.context_embedding is not None:
+                context_features = self.context_embedding.weight.unsqueeze(0).repeat(batch_size, 1, 1)
+                text_features = torch.cat([text_features, context_features], dim=1)
+        
+        return {"texts": text_features}
+    
+    def forward(self, batched_inputs):
+        """
+        Args:
+            batched_inputs: a list, batched outputs of :class:`DatasetMapper`.
+                Each item in the list contains the inputs for one image.
+                For now, each item in the list is a dict that contains:
+                   * "image": Tensor, image in (C, H, W) format.
+                   * "instances": per-region ground truth
+                   * Other information that's included in the original dicts, such as:
+                     "height", "width" (int): the output resolution of the model (may be different
+                     from input resolution), used in inference.
+        Returns:
+            list[dict]:
+                each dict has the results for one image. The dict contains the following keys:
+                * "sem_seg":
+                    A Tensor that represents the
+                    per-pixel segmentation prediced by the head.
+                    The prediction has shape KxHxW that represents the logits of
+                    each class for each pixel.
+                * "panoptic_seg":
+                    A tuple that represent panoptic output
+                    panoptic_seg (Tensor): of shape (height, width) where the values are ids for each segment.
+                    segments_info (list[dict]): Describe each segment in `panoptic_seg`.
+                        Each dict contains keys "id", "category_id", "isthing".
+        """
+        images = [x["image"].to(self.device) for x in batched_inputs]
+        images = [(x - self.mean_pixel_value) / self.std_pixel_value for x in images]
+        images = ImageList.from_tensors(images, self.divisibility_factor)
+
+        tasks = torch.cat([self.task_tokenizer(x["task"]).to(self.device).unsqueeze(0) for x in batched_inputs], dim=0)
+        tasks = self.task_specific_mlp(tasks.float())
+
+        features = self.backbone_network(images.tensor)
+        outputs = self.segmentation_head(features, tasks)
+
+        if self.training:
+            texts = torch.cat([self.text_tokenizer(x["text"]).to(self.device).unsqueeze(0) for x in batched_inputs], dim=0)
+            texts_x = self.encode_text(texts)
+            outputs = {**outputs, **texts_x}
+
+            # mask classification target
+            if "instances" in batched_inputs[0]:
+                gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
+                targets = self.prepare_targets(gt_instances, images)
+            else:
+                targets = None
+
+            losses = self.segmentation_criterion(outputs, targets)
+
+            for k in list(losses.keys()):
+                if k in self.segmentation_criterion.weight_dict:
+                    losses[k] *= self.segmentation_criterion.weight_dict[k]
+                else:
+                    losses.pop(k)
+            return losses
+        else:
+            # Handle inference here
+            mask_class_results = outputs["pred_logits"]
+            mask_pred_results = outputs["pred_masks"]
+            # Upsample masks to match image sizes
+            mask_pred_results = F.interpolate(
+                mask_pred_results,
+                size=(images.tensor.shape[-2], images.tensor.shape[-1]),
+                mode="bilinear",
+                align_corners=False,
+            )
+            del outputs
+
+            processed_results = []
+            for (mask_cls, mask_pred, input_per_image, image_size) in enumerate(
+                    zip(mask_class_results, mask_pred_results, batched_inputs, images.image_sizes)):
+                
+                height, width = input_per_image.get("height", image_size[0]), input_per_image.get("width", image_size[1])
+                processed_result = {}
+
+                if self.preprocess_before_inference:
+                    mask_pred = handle_cuda_oom(semantic_seg_postprocessing)(
+                        mask_pred, image_size, height, width)
+                    mask_cls = mask_cls.to(mask_pred.device)
+
+                # semantic segmentation inference
+                if self.enable_semantic:
+                    semantic_result = handle_cuda_oom(self.semantic_inference)(mask_cls, mask_pred)
+                    if not self.preprocess_before_inference:
+                        semantic_result = handle_cuda_oom(semantic_seg_postprocessing)(semantic_result, image_size, height, width)
+                    processed_result["sem_seg"] = semantic_result
+
+                # panoptic segmentation inference
+                if self.enable_panoptic:
+                    panoptic_result = handle_cuda_oom(self.panoptic_inference)(mask_cls, mask_pred)
+                    processed_result["panoptic_seg"] = panoptic_result
+                
+                # instance segmentation inference
+                if self.enable_instance:
+                    instance_result = handle_cuda_oom(self.instance_inference)(mask_cls, mask_pred, input_per_image["task"])
+                    processed_result["instances"] = instance_result
+
+                processed_results.append(processed_result)
+
+            return processed_results
     
     def prepare_targets(self, targets, images):
         """
