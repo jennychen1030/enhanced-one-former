@@ -14,7 +14,7 @@ Before installing and using Enhanced OneFormer, ensure you have the following pr
 
 ## Installation Instructions
 - Clone the repository:
-  - git clone [URL to Enhanced OneFormer repository]
+  - git clone [[URL to Enhanced OneFormer repository](https://github.com/jennychen1030/enhanced-one-former)]
   - cd EnhancedOneFormer
 - Install required Python packages:
   - pip install -r requirements.txt
