@@ -2,7 +2,8 @@
 
 ## Features
 - Enhanced OneFormer is an advanced neural network model designed for comprehensive image segmentation tasks, including semantic, instance, and panoptic segmentation. Building upon the original OneFormer architecture, this enhanced version integrates improvements in various components, offering more robust and accurate segmentation capabilities.
-- I have used the OneFormer model from the paper "OneFormer: One Transformer to Rule Universal Image Segmentation" as a reference for re-implementations. I implemented my version of EnhancedOneFormer model from scratch and added more comments of each function.
+- I have used the OneFormer model from the paper "OneFormer: One Transformer to Rule Universal Image Segmentation" as a reference for re-implementations. I implemented my version of EnhancedOneFormer model from scratch and added more comments on each function.
+- Here is the GitHub repository of the OneFormer model: https://github.com/SHI-Labs/OneFormer/tree/main
 
 ## Prerequisites
 Before installing and using Enhanced OneFormer, ensure you have the following prerequisites installed:
@@ -40,3 +41,6 @@ Before installing and using Enhanced OneFormer, ensure you have the following pr
 ## Additional Notes
 - This project is an enhancement of the original OneFormer architecture and is intended for research and development purposes.
 - For issues or feature requests, please file them on the GitHub issue tracker.
+
+## Acknowledgement
+- Thank the authors of OneFormer for releasing their helpful codebases.
